@@ -30,6 +30,155 @@ var exampleHard = SudokuPuzzle3x3{
 	{0, 2, 8, 0, 0, 0, 0, 0, 0},
 }
 
+var alignmentChecks = [3][3]uint8{
+	{1, 1, 0},
+	{0, 1, 1},
+	{1, 0, 1},
+}
+
+type point struct {
+	x uint
+	y uint
+}
+
+// Use like this:
+// p := point{0,0}
+// iter := p.iterateOverAllCellsInSector()
+// for p, ok := iter(); ok; p, ok = iter() {
+//     fmt.Printf("Sector iterator: cell(%d,%d)", p.x,p.y)
+// }
+func (p point) iterateOverAllCellsInSector() func() (point, bool) {
+	anchor := point{x: (p.x / 3) * 3, y: (p.y / 3) * 3}
+	iter := -1
+	return func() (point, bool) {
+		iter++
+		return point{x: anchor.x + uint(iter%3), y: anchor.y + uint(iter/3)}, (iter < 9)
+	}
+}
+
+// Sector
+// 0,1,2
+// 3,4,5
+// 6,7,8
+// Possible aligned pairs(p1,p2)
+// 0 1
+// 0 2
+// 0 3
+// 0 6
+// 1 2
+// 1 4
+// 1 7
+// 2 5
+// 2 8
+// 3 4
+// 3 5
+// 3 6
+// 4 5
+// 4 7
+// 5 8
+// 6 7
+// 6 8
+// 7 8
+func (p point) iterateOverAllAlignedCellsInSector() func() (point, point, bool) {
+	anchor := point{x: (p.x / 3) * 3, y: (p.y / 3) * 3}
+	c1 := -1
+	c2 := 6
+	d := 3
+	return func() (point, point, bool) {
+		if d == 1 && (c2%3) == 2 {
+			c2 = c1
+			d = 3
+		}
+		if d == 3 && (c2+d) > 8 {
+			c1++
+			if c1%3 == 2 {
+				d = 3
+			} else {
+				d = 1
+			}
+			c2 = c1
+		}
+		c2 += d
+		p1 := point{x: anchor.x + uint(c1%3), y: anchor.y + uint(c1/3)}
+		p2 := point{x: anchor.x + uint((c2)%3), y: anchor.y + uint((c2)/3)}
+		return p1, p2, (c1 != 8)
+	}
+}
+
+func (s *SudokuBoard) countOccurencesInSector(p point, number uint, ignored func(p point) bool) (normalCount uint8, ignoredCount uint8) {
+	normalCount = 0
+	ignoredCount = 0
+	iter := p.iterateOverAllCellsInSector()
+	for p, ok := iter(); ok; p, ok = iter() {
+		if ignored(p) == false {
+			normalCount += s.board[p.y][p.x][number-1]
+		} else {
+			ignoredCount += s.board[p.y][p.x][number-1]
+		}
+	}
+	return
+}
+
+func (s *SudokuBoard) checkAlignmentRule(x uint, y uint, n uint) (found bool, sp point, sd [2]uint) {
+	p := point{x: x, y: y}
+	iter := p.iterateOverAllAlignedCellsInSector()
+	for p1, p2, ok := iter(); ok; p1, p2, ok = iter() {
+		ignore := func(p point) bool {
+			// This is to ignore these 2 cells from computing the occurences
+			return (p.x == p1.x && p.y == p1.y) || (p.x == p2.x && p.y == p2.y)
+		}
+		no, ni := s.countOccurencesInSector(p, n, ignore)
+		if no == 0 && ni == 2 {
+			// There are no normal occurences of this number but the two cells we checked
+			// both have this number. This is what we are looking for.
+			return true, point{x: p1.x, y: p1.y}, [2]uint{p2.x - p1.x, p2.y - p1.y}
+		}
+	}
+
+	return false, point{}, [2]uint{0, 0}
+}
+
+func (s *SudokuBoard) eliminateNumberFromAllCellsOnAxisExceptCurrentSector(p point, axis [2]uint, number uint) {
+	if axis[0] == 1 {
+		psx := p.x / 3
+		for sx := uint(0); sx < 3; sx++ {
+			if sx != psx {
+				for cx := uint(0); cx < 3; cx++ {
+					bx := sx*3 + cx
+					by := p.y
+					s.board[by][bx][number-1] = 0
+				}
+			}
+		}
+	} else if axis[1] == 1 {
+		psy := p.y / 3
+		for sy := uint(0); sy < 3; sy++ {
+			if sy != psy {
+				for cy := uint(0); cy < 3; cy++ {
+					by := sy*3 + cy
+					bx := p.x
+					s.board[by][bx][number-1] = 0
+				}
+			}
+		}
+	}
+}
+
+func (s *SudokuBoard) applyAlignmentRule() {
+	for sy := uint(0); sy < 3; sy++ {
+		for sx := uint(0); sx < 3; sx++ {
+			for n := uint(0); n < 9; n++ {
+				bx := sx * 3
+				by := sy * 3
+				found, p, axis := s.checkAlignmentRule(bx, by, n)
+				if found {
+					s.eliminateNumberFromAllCellsOnAxisExceptCurrentSector(p, axis, n)
+				}
+			}
+		}
+	}
+}
+
 type SudokuBoard struct {
 	width  uint
 	height uint
@@ -121,7 +270,7 @@ func (s *SudokuBoard) prepare(puzzle SudokuPuzzle3x3) {
 			}
 		}
 	}
-	s.printBoard()
+	//s.printBoard()
 
 	// Start populate the board with the existing numbers from the puzzle
 	for sy := uint(0); sy < s.height; sy++ {
@@ -133,7 +282,7 @@ func (s *SudokuBoard) prepare(puzzle SudokuPuzzle3x3) {
 			}
 		}
 	}
-	s.printBoard()
+	//s.printBoard()
 }
 
 func (s *SudokuBoard) fillInNumber(x, y uint, number uint) {
